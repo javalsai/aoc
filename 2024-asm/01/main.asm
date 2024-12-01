@@ -56,6 +56,8 @@ section .rodata
     DBGMSG_READLNFNSH_LEN: equ $ - DBGMSG_READLNFNSH
 
 section .data
+    demo_arr: dq 1, 2, 2, 3, 4
+    demo_arr_len: equ $ - demo_arr
 
 section .text
     global _start
@@ -149,7 +151,7 @@ _start:
     mov [rbp-16], rax
 
 
-    ; and deinterlace lists from stack to the mem vecs
+    ; and "deinterlace" lists from stack to the mem vecs
     mov rax, [rbp-24]
     mov rbx, [rbp-8]
     mov rcx, [rbp-16]
@@ -164,30 +166,143 @@ _start:
         test rax, rax
         jnz .deint_loop
 
-    ; --dbg-- ensure stuff worked
-    ; rax = 0; rbx = qword[] list2
+    ; and now we can also redefine
+    ; [rbp-32]: accumulator (rsp should be back to original place after popping that)
+    mov qword [rbp-32], 0
+
+    ; mov rax, rbx
+    ; mov rsi, [rbp-24]
+    ; mov rdi, 0x27A6
+    ; call find_smolest
+    ; push rsi
+    ; call ptos
+    ; call print_ptos
+    ; pop rax
+    ; call ptos
+    ; call print_ptos
+
+    ; and we keep the list1 smallest num and ammount in r11, r12
+    ; same for list2 with r13 and r14
+
+    mov r11, 0
+    mov r12, 1
     mov r13, 0
-    push rbx
-    .ensure_l:
-        cmp r13, [rbp-24]
-        je .ensure_end
+    mov r14, 1
+    .substract_loop:
+        ; just list1 for now
+        test r12, r12
+        jnz .find_smolest_1_end
+            mov rax, [rbp-8]
+            mov rsi, [rbp-24]
+            mov rdi, r11
+            call find_smolest
+            cmp rax, 0FFFFFFFFFFFFFFFFh
+            je .substract_loop_end
+            mov r11, rax
+            mov r12, rsi
+            .find_smolest_1_end:
+        dec r12
 
-        mov rbx, [rsp]
-        mov rax, [rbx+r13]
-        call ptos
-        call print_ptos
+        ; and list2 now
+        test r14, r14
+        jnz .find_smolest_2_end
+            mov rax, [rbp-16]
+            mov rsi, [rbp-24]
+            mov rdi, r13
+            call find_smolest
+            cmp rax, 0FFFFFFFFFFFFFFFFh
+            je .substract_loop_end
+            mov r13, rax
+            mov r14, rsi
+            .find_smolest_2_end:
+        dec r14
 
-        add r13, 8
-        jmp .ensure_l
-        .ensure_end:
-        pop rbx
-    ; --dbg--
+        mov rax, r11
+        sub rax, r13
+        call n_abs
+        add qword [rbp-32], rax
+
+        jmp .substract_loop
+        .substract_loop_end:
+
+    mov rax, [rbp-32]
+    mov rdi, 10
+    call itos
+    mov rax, r10
+    mov rdi, r9
+    call just_print
+    call print_newline
 
     ; exit
     mov rdi, 0
     _exit:
     mov rax, OS_EXIT
     syscall
+
+; takes rax: n
+n_abs:
+    cmp rax, 0
+    jg .not_neg
+        not rax
+        inc rax
+    .not_neg:
+    ret
+
+; find smallest num in list:
+;  rax: list ptr           | [rbp-8]
+;  rsi: list size (bytes)  | [rbp-16]
+;  rdi: not-smaller-than   | [rbp-24]
+; returns
+;  rax: smolest, 0 if none
+;  rsi: amount
+find_smolest:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    ; ...
+    ; [rbp-32]: smolest found yet
+    ; [rbp-40]: smolest found yet amount
+    mov qword [rbp-32], 0FFFFFFFFFFFFFFFFh
+    mov qword [rbp-40], 0
+
+    mov [rbp-8], rax
+    mov [rbp-16], rsi
+    mov [rbp-24], rdi
+
+    push r15 ; save
+    push r14
+    mov r15, 0
+    .find_l:
+        mov r14, qword [rax+r15]
+        cmp r14, rdi
+        jbe .find_l_cont
+
+        ; so here... ughhhhh
+        ; the number is greater than the limit
+        cmp r14, [rbp-32]
+        ja .find_l_cont ; cuz ugh, not smolest
+        je .smolest_but_not_new
+            ; and here is new smolest
+            mov [rbp-32], r14
+            mov qword [rbp-40], 0
+        .smolest_but_not_new:
+        inc qword [rbp-40]
+
+        .find_l_cont:
+        add r15, 8
+        cmp r15, rsi
+        jb .find_l
+        .find_l_end:
+
+    pop r14 ; restore
+    pop r15
+
+    mov rax, [rbp-32]
+    mov rsi, [rbp-40]
+
+    mov rsp, rbp
+    pop rbp
+    ret
 
 ; takes [rsp+8/rbp+16]: ptr
 ; returns:
