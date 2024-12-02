@@ -1,0 +1,14 @@
+# inputs
+demo.txt
+input.txt
+
+# binaries
+main
+test
+
+# object files
+*.o
+
+# zig...
+.zig-cache
+*.log
