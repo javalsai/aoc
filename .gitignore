@@ -12,3 +12,8 @@ test
 # zig...
 .zig-cache
 *.log
+
+# bun
+package.json
+bun.lockb
+node_modules/
