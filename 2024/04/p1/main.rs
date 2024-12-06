@@ -8,6 +8,17 @@ fn main() -> std::io::Result<()> {
     let mut file = File::open(filename)?;
     file.read_to_end(&mut contents)?;
 
+    let directions: &[(isize, isize)] = &[
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (0, -1),
+        (0, 1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+    ];
+
     let a = Instant::now();
 
     let lines: Vec<_> = contents.split(|&b| b == b'\n').collect();
@@ -15,11 +26,7 @@ fn main() -> std::io::Result<()> {
     for (i, ln) in lines.iter().enumerate() {
         for (j, &ch) in ln.iter().enumerate() {
             if ch == b'X' {
-                let map = [-1, 0, 1].map(|i| [-1, 0, 1].map(|j| (i, j)));
-                for dir in map.as_flattened() {
-                    if dir.0 == 0 && dir.1 == 0 {
-                        continue;
-                    }
+                for dir in directions.iter() {
                     let r = eq_in_dir(&lines, (j, i), *dir, "MAS".bytes());
                     if r {
                         t += 1;
@@ -35,42 +42,32 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
+macro_rules! pstve_try_bool {
+    ($a:expr, $b:expr) => {{
+        let r = $a + $b;
+        if r < 0 { return false; }
+        r
+    }};
+}
+
 fn eq_in_dir(
     buf: &[&[u8]],
     pos: (usize, usize),
     dir: (isize, isize),
-    matches: impl Iterator<Item = u8>,
-) -> bool {
-    opt_eq_in_dir(buf, pos, dir, matches).is_some()
-}
-
-fn opt_eq_in_dir(
-    buf: &[&[u8]],
-    pos: (usize, usize),
-    dir: (isize, isize),
     mut matches: impl Iterator<Item = u8>,
-) -> Option<()> {
+) -> bool {
     let Some(must_match) = matches.next() else {
-        return Some(());
+        return true;
     };
 
-    let new_1 = do_the_thing(dir.1, pos.1)?;
-    let new_0 = do_the_thing(dir.0, pos.0)?;
-    let ln = buf.get(new_1)?;
-    let ch = ln.get(new_0)?;
+    let new_1 = pstve_try_bool!(pos.1 as isize, dir.1) as usize;
+    let new_0 = pstve_try_bool!(pos.0 as isize, dir.0) as usize;
+    let Some(ln) = buf.get(new_1) else { return false; };
+    let Some(ch) = ln.get(new_0) else { return false; };
 
     if must_match == *ch {
-        opt_eq_in_dir(buf, (new_0, new_1), dir, matches)
+        eq_in_dir(buf, (new_0, new_1), dir, matches)
     } else {
-        None
+        false
     }
-}
-
-#[inline]
-fn do_the_thing(a: isize, b: usize) -> Option<usize> {
-    let r = b as isize + a;
-    if r < 0 {
-        return None;
-    }
-    Some(r as usize)
 }
