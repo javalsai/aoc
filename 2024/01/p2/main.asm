@@ -5,6 +5,7 @@
 %define OS_MMAP   9
 %define OS_MUNMAP 11
 %define OS_EXIT   60
+%define OS_CLOCK_GETTIME 228
 
 %define O_RDONLY      0b000
 %define O_WRONLY      0b001
@@ -19,6 +20,8 @@
 %define MAP_PRIVATE   0b10
 ; also more opts ig
 
+%define CLOCKID_CLOCK_MONOTONIC 1
+
 %define FD_STDIN  0
 %define FD_STDOUT 1
 %define FD_STDERR 2
@@ -27,11 +30,20 @@
 
 section .bss
     ptos_str: resb 16
+    cinstant: resb 128 ; (two i64, secs and nanos)
+    prof_start_ns: resq 1
 
 section .rodata
     PTR_0X: db "0x"
     NEWLINE: db 10
     ZERO_DEV: db "/dev/zero", 0
+
+    MSG_NANOS_END: db "μs", 0x1b, "[0m", 10
+    MSG_NANOS_END_LEN: equ $ - MSG_NANOS_END
+    MSG_SPACE_IN_SPACE: db " in "
+    MSG_SPACE_IN_SPACE_LEN: equ $ - MSG_SPACE_IN_SPACE
+    MSG_ANSI_TOTAL: db 0x1b, "[1;35m", "Total "
+    MSG_ANSI_TOTAL_LEN: equ $ - MSG_ANSI_TOTAL
 
     MSG_FOPENING_1: db 0x1b, "[36m", "Opening '"
     MSG_FOPENING_1_LEN: equ $ - MSG_FOPENING_1
@@ -49,6 +61,8 @@ section .rodata
     ERRMSG_MALLOC_LEN: equ $ - ERRMSG_MALLOC
     ERRMSG_UNFULLREAD: db 0x1b, "[1;31m", "Read an unaligned ammount of bytes", 0x1b, "[0m", 10
     ERRMSG_UNFULLREAD_LEN: equ $ - ERRMSG_UNFULLREAD
+    ERRMSG_GETTIME: db 0x1b, "[1;31m", "clock_gettime syscall failed", 0x1b, "[0m", 10
+    ERRMSG_GETTIME_LEN: equ $ - ERRMSG_UNFULLREAD
 
     DBGMSG_READLN: db " - read an 'aligned' line", 10
     DBGMSG_READLN_LEN: equ $ - DBGMSG_READLN
@@ -120,6 +134,7 @@ _start:
         jmp .read_loop
         .read_loop_end:
 
+
     ; and at this point we can redefine
     ;  [rbp-8]:  input fd
     ;  [rbp-16]: alignment
@@ -135,6 +150,9 @@ _start:
     ;  [rbp-8]:  list1 ptr
     ;  [rbp-16]: list2 ptr
     ;  [rbp-24]: each list size
+        ; ignore dis
+        call monotonic_now
+        mov [prof_start_ns], rax
 
     ; nooow, we have all that shii in stack
     ; so we qalc the size (sub looks reversed bsc stack goes down)
@@ -202,13 +220,38 @@ _start:
         test r11, r11
         jnz .cmp_loop
 
+    call monotonic_now
+    mov rdx, 0
+    sub rax, [prof_start_ns]
+    mov rdi, 1000
+    div rdi
+    push rax ; our perf in ns
+
+    mov rsi, MSG_ANSI_TOTAL
+    mov rdx, MSG_ANSI_TOTAL_LEN
+    call print
+
     mov rax, [rbp-32]
     mov rdi, 10
     call itos
     mov rax, r10
     mov rdi, r9
     call just_print
-    call print_newline
+
+    mov rsi, MSG_SPACE_IN_SPACE
+    mov rdx, MSG_SPACE_IN_SPACE_LEN
+    call print
+
+    pop rax
+    mov rdi, 10
+    call itos
+    mov rax, r10
+    mov rdi, r9
+    call just_print
+
+    mov rsi, MSG_NANOS_END
+    mov rdx, MSG_NANOS_END_LEN
+    call print
 
     ; exit
     mov rdi, 0
@@ -246,6 +289,25 @@ count_n:
     mov rsp, rbp
     pop rbp
     ret
+
+monotonic_now:
+    mov rax, OS_CLOCK_GETTIME
+    mov rsi, cinstant
+    mov rdi, CLOCKID_CLOCK_MONOTONIC
+    syscall
+
+    cmp rax, 0
+    jl .noret
+        mov rax, [cinstant+0] ; secs
+        mov rdx, 1_000_000_000
+        mul rdx ; we drop rdx, as always
+        add rax, [cinstant+8] ; nanos
+        ret
+    .noret:
+    mov rsi, ERRMSG_GETTIME
+    mov rdx, ERRMSG_GETTIME_LEN
+    jmp errmsg
+
 
 ; takes [rsp+8/rbp+16]: ptr
 ; returns:
