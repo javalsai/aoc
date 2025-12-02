@@ -31,7 +31,11 @@ pub mod dl {
         /// To get the error call [`ffi::error()`].
         pub fn try_drop(self) -> Result<(), (Self, i32)> {
             let err = unsafe { ffi::close(self.0) };
-            if err == 0 { Ok(()) } else { Err((self, err)) }
+            if err == 0 {
+                Ok(())
+            } else {
+                Err((self, err))
+            }
         }
 
         /// # Safety
@@ -176,8 +180,8 @@ pub mod loader {
         // drop.
         untry!(unsafe { handle.symfn::<C<isize>>(c"challenge_isize") }.map(V::Isize));
         untry!(unsafe { handle.symfn::<C<usize>>(c"challenge_isize") }.map(V::Usize));
-        untry!(unsafe { handle.symfn::<C<(usize, usize)>>(c"challenge_isize") }.map(V::UsizeDuple));
-        untry!(unsafe { handle.symfn::<C<(isize, isize)>>(c"challenge_isize") }.map(V::IsizeDuple));
+        untry!(unsafe { handle.symfn::<C<(usize, usize)>>(c"challenge_isize_duple") }.map(V::UsizeDuple));
+        untry!(unsafe { handle.symfn::<C<(isize, isize)>>(c"challenge_isize_duple") }.map(V::IsizeDuple));
 
         None
     }
