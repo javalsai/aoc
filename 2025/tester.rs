@@ -2,12 +2,12 @@
 
 use std::{
     env,
-    ffi::{CStr, OsStr},
+    ffi::OsStr,
     fs::File,
     io::{self, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::Instant,
+    time::{self, Instant},
 };
 
 pub mod dl {
@@ -133,6 +133,19 @@ pub mod loader {
     }
 
     impl FnVariant {
+        /// Ideally the fn would be put on the heap, but that requires customly allocating
+        /// executable memory, a DST pain other stuff I can't be concerned with rn.
+        pub const fn make_noop_stub_isize() -> Self {
+            unsafe extern "Rust" fn __stub(_: &[u8]) -> isize {
+                0
+            }
+
+            FnVariant::Isize(__stub)
+        }
+
+        /// # Safety
+        ///
+        /// Calls external arbitrary FNs.
         pub unsafe fn call(&self, buf: &[u8]) -> FnRetVariant {
             use FnRetVariant as R;
             use FnVariant as V;
@@ -146,10 +159,7 @@ pub mod loader {
         }
     }
 
-    /// # Safety
-    ///
-    /// Can return arbitrary fn's depending on the handle's symbols.
-    pub unsafe fn load_fn_from(handle: &Handle) -> Option<FnVariant> {
+    pub fn load_fn_from(handle: &Handle) -> Option<FnVariant> {
         macro_rules! untry {
             ($e:expr) => {
                 match $e {
@@ -162,6 +172,8 @@ pub mod loader {
         use ChallengeFn as C;
         use FnVariant as V;
 
+        // SAFETY: This is actually safe as it just creates the fn ptr, no weird fn with weird
+        // drop.
         untry!(unsafe { handle.symfn::<C<isize>>(c"challenge_isize") }.map(V::Isize));
         untry!(unsafe { handle.symfn::<C<usize>>(c"challenge_isize") }.map(V::Usize));
         untry!(unsafe { handle.symfn::<C<(usize, usize)>>(c"challenge_isize") }.map(V::UsizeDuple));
@@ -171,7 +183,21 @@ pub mod loader {
     }
 }
 
-const EXPORT_NAME: &CStr = c"challenge";
+pub mod performer {
+    use std::time::{Duration, Instant};
+
+    pub fn get_avg_runt(runs: u32, run: fn()) -> std::time::Duration {
+        let mut total_t = Duration::ZERO;
+        for _ in 0..runs {
+            let t = Instant::now();
+            run();
+            total_t += t.elapsed();
+        }
+
+        total_t / runs
+    }
+}
+
 pub type ChallengeFn = unsafe extern "Rust" fn(&[u8]) -> isize;
 
 fn main() -> io::Result<()> {
@@ -182,6 +208,11 @@ fn main() -> io::Result<()> {
         return Ok(());
     };
 
+    let (noop_overhead_cold, noop_overhead_hot) = measure_noop_overhead();
+    println!(
+        "\x1b[34minf: noop fn takes {noop_overhead_hot:#?} hot and {noop_overhead_cold:#?} cold\x1b[0m",
+    );
+
     let rs_path = PathBuf::from(&day);
     assert_eq!(rs_path.extension(), Some(OsStr::new("rs")));
     let so_path = rs_path.with_extension("so");
@@ -191,7 +222,7 @@ fn main() -> io::Result<()> {
     let input = buffer_input(&input)?;
 
     let challenge = dl::open(so_path).expect("Couldn't load dyn library");
-    let challenge_main = unsafe { loader::load_fn_from(&challenge) }.expect(concat!(
+    let challenge_main = loader::load_fn_from(&challenge).expect(concat!(
         "Didn't find any appropiate symbol in the compiled .so file. Make sure there is one and is ",
         stringify!(unsafe extern "Rust" fn(&[u8]) -> isize)
     ));
@@ -206,6 +237,19 @@ fn main() -> io::Result<()> {
     );
 
     Ok(())
+}
+
+const STUB_ISIZE: loader::FnVariant = loader::FnVariant::make_noop_stub_isize();
+fn measure_noop_overhead() -> (time::Duration, time::Duration) {
+    let timer = Instant::now();
+    // SAFETY: completely safe, not arbitrary fn but our stub
+    unsafe { STUB_ISIZE.call(&[]) };
+    let cold = timer.elapsed();
+    let hot = performer::get_avg_runt(u16::MAX.into(), || unsafe {
+        STUB_ISIZE.call(&[]);
+    });
+
+    (cold, hot)
 }
 
 fn compile(rs: &Path, so: &Path, rustc: Option<&str>) -> io::Result<()> {

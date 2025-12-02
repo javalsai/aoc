@@ -1,24 +1,19 @@
-use std::{hint::unreachable_unchecked, io::BufRead};
+type SmolI = i32;
 
 #[unsafe(no_mangle)]
 unsafe extern "Rust" fn challenge_isize(buf: &[u8]) -> isize {
     let mut count = 0;
     let mut pos = 50;
 
-    for ln in buf.lines() {
-        let ln = unsafe { ln.unwrap_unchecked() };
-        let (dir, amt) = (ln.as_bytes()[0], &ln[1..]);
+    let buf = unsafe { str::from_utf8_unchecked(buf.get_unchecked(..(buf.len() - 1))) };
 
-        let amt: isize = unsafe { amt.parse().unwrap_unchecked() };
-        if amt == 0 {
-            continue;
-        }
+    for ln in buf.split('\n') {
+        let (dir, amt) = unsafe { (*ln.as_bytes().get_unchecked(0), ln.get_unchecked(1..)) };
+
+        let amt: SmolI = unsafe { amt.parse().unwrap_unchecked() };
+        if amt == 0 { continue; }
         let prev_pos = pos;
-        match dir {
-            b'L' => pos -= amt,
-            b'R' => pos += amt,
-            _ => unsafe { unreachable_unchecked() },
-        }
+        pos += ((((dir == b'R') as SmolI) << 1) - 1) * amt;
 
         count += if pos < 0 {
             if prev_pos == 0 {
@@ -33,5 +28,5 @@ unsafe extern "Rust" fn challenge_isize(buf: &[u8]) -> isize {
         pos = pos.rem_euclid(100);
     }
 
-    count
+    count as isize
 }
