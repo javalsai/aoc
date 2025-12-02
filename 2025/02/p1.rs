@@ -1,0 +1,69 @@
+#[unsafe(no_mangle)]
+fn challenge_usize(b: &[u8]) -> usize {
+    let mut total = 0;
+    let s = unsafe { str::from_utf8_unchecked(b) };
+
+    dbg!(is_repeating(b"11"));
+    let ranges = s.trim_end().split(',');
+    for range in ranges {
+        let (start, end) = range.split_once('-').unwrap();
+        if start.starts_with('0') || end.starts_with('0') {
+            continue;
+        }
+        let (start, end): (usize, usize) = (start.parse().unwrap(), end.parse().unwrap());
+        println!("{start}-{end}");
+
+        for id in start..=end {
+            let id_s = id.to_string();
+
+            if is_repeating(id_s.as_bytes()) {
+                total += id;
+                println!("-->> invalid {id_s}");
+            }
+        }
+    }
+
+    total
+}
+
+const MAX_USIZE_LEN: usize = const { usize::MAX.ilog10() + 1 } as usize;
+/// Output is reversed btw
+fn fast_to_string(mut n: usize, into: &mut [u8; MAX_USIZE_LEN]) -> &mut [u8] {
+    let mut len = 0;
+    while n != 0 {
+        into[len] = (n % 10) as u8 + b'0';
+        n /= 10;
+        len += 1;
+    }
+
+    &mut into[0..len]
+}
+
+fn is_repeating(s: &[u8]) -> bool {
+    if !s.len().is_multiple_of(2) {
+        return false;
+    }
+
+    let mid = s.len() / 2;
+    let (left, right) = s.split_at(mid);
+    left == right
+}
+
+// LMAO: I did p2 instead of p1 firstly bcs I misread it.
+
+// fn is_repeating(s: &[u8]) -> bool {
+//     for sublen in 0..(s.len() / 2) {
+//         let sublen = sublen + 1;
+//         if !s.len().is_multiple_of(sublen) {
+//             continue;
+//         }
+//         let pref = &s[0..sublen];
+
+//         let is_repeating = s[sublen..].chunks_exact(sublen).all(|c| c == pref);
+//         if is_repeating {
+//             return true;
+//         }
+//     }
+
+//     false
+// }
