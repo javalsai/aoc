@@ -3,7 +3,6 @@ fn challenge_usize(b: &[u8]) -> usize {
     let mut total = 0;
     let s = unsafe { str::from_utf8_unchecked(b) };
 
-    dbg!(is_repeating(b"11"));
     let ranges = s.trim_end().split(',');
     for range in ranges {
         let (start, end) = range.split_once('-').unwrap();
@@ -11,14 +10,14 @@ fn challenge_usize(b: &[u8]) -> usize {
             continue;
         }
         let (start, end): (usize, usize) = (start.parse().unwrap(), end.parse().unwrap());
-        println!("{start}-{end}");
+        // println!("{start}-{end}");
 
         for id in start..=end {
             let id_s = id.to_string();
 
             if is_repeating(id_s.as_bytes()) {
                 total += id;
-                println!("-->> invalid {id_s}");
+                // println!("-->> invalid {id_s}");
             }
         }
     }

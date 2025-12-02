@@ -31,11 +31,7 @@ pub mod dl {
         /// To get the error call [`ffi::error()`].
         pub fn try_drop(self) -> Result<(), (Self, i32)> {
             let err = unsafe { ffi::close(self.0) };
-            if err == 0 {
-                Ok(())
-            } else {
-                Err((self, err))
-            }
+            if err == 0 { Ok(()) } else { Err((self, err)) }
         }
 
         /// # Safety
@@ -180,8 +176,14 @@ pub mod loader {
         // drop.
         untry!(unsafe { handle.symfn::<C<isize>>(c"challenge_isize") }.map(V::Isize));
         untry!(unsafe { handle.symfn::<C<usize>>(c"challenge_usize") }.map(V::Usize));
-        untry!(unsafe { handle.symfn::<C<(usize, usize)>>(c"challenge_isize_duple") }.map(V::UsizeDuple));
-        untry!(unsafe { handle.symfn::<C<(isize, isize)>>(c"challenge_usize_duple") }.map(V::IsizeDuple));
+        untry!(
+            unsafe { handle.symfn::<C<(usize, usize)>>(c"challenge_isize_duple") }
+                .map(V::UsizeDuple)
+        );
+        untry!(
+            unsafe { handle.symfn::<C<(isize, isize)>>(c"challenge_usize_duple") }
+                .map(V::IsizeDuple)
+        );
 
         None
     }
@@ -202,6 +204,16 @@ pub mod performer {
     }
 }
 
+macro_rules! info {
+    ($fmt:literal) => {
+        println!(concat!("\x1b[34m inf: ", $fmt, "\x1b[0m"));
+    };
+
+    ($fmt:literal, $($arg:tt)*) => {
+        println!(concat!("\x1b[34m inf: ", $fmt, "\x1b[0m"), $($arg)*);
+    };
+}
+
 pub type ChallengeFn = unsafe extern "Rust" fn(&[u8]) -> isize;
 
 fn main() -> io::Result<()> {
@@ -213,8 +225,9 @@ fn main() -> io::Result<()> {
     };
 
     let (noop_overhead_cold, noop_overhead_hot) = measure_noop_overhead();
-    println!(
-        "\x1b[34minf: noop fn takes {noop_overhead_hot:#?} hot and {noop_overhead_cold:#?} cold\x1b[0m",
+    info!(
+        "noop fn takes {:#?} hot and {:#?} cold",
+        noop_overhead_hot, noop_overhead_cold
     );
 
     let rs_path = PathBuf::from(&day);
@@ -310,8 +323,11 @@ fn buffer_input(input_path: &str) -> io::Result<Vec<u8>> {
         io::stdin().read_to_end(&mut input)?;
         Ok(input)
     } else {
+        let t = Instant::now();
         let mut f = File::open(input_path)?;
         f.read_to_end(&mut input)?;
+        info!("\x1b[34mbuffering input {:#?}\x1b[0m", t.elapsed());
+
         Ok(input)
     }
 }
