@@ -1,3 +1,4 @@
+#![feature(mpmc_channel)]
 /*
 rustc --edition 2024 sped.rs -O -Copt-level=3 -Cstrip=symbols -Cdebuginfo=0 -Cdebug-assertions=off -Coverflow-checks=false -Cpanic=abort -Ctarget-cpu=native -Ccodegen-units=1
 */
@@ -5,11 +6,11 @@ rustc --edition 2024 sped.rs -O -Copt-level=3 -Cstrip=symbols -Cdebuginfo=0 -Cde
 use std::{
     cmp::Ordering,
     fs::File,
-    io::Read,
+    io::{BufRead, BufReader},
     mem::MaybeUninit,
     sync::{
-        Mutex,
         atomic::{AtomicUsize, Ordering::Relaxed},
+        mpmc::channel,
     },
     thread,
     time::Instant,
@@ -22,52 +23,51 @@ fn main() {
     let total_joltage1 = AtomicUsize::new(0);
     let total_joltage2 = AtomicUsize::new(0);
 
-    let f = Mutex::new(File::open("2025-3.txt").unwrap());
+    let f = File::open("2025-3.txt").unwrap();
+
+    let (tx, rx) = channel::<String>();
 
     thread::scope(|s| {
         let c = || {
-            #[allow(clippy::uninit_assumed_init, invalid_value)]
-            let mut lnbuf: [u8; 50100] = unsafe { MaybeUninit::uninit().assume_init() };
+            for ln in rx.iter() {
+                let bats = ln.as_bytes();
 
-            while {
-                let mut flock = f.lock().unwrap();
-                let flock_read = flock.read_exact(&mut lnbuf);
-                flock_read.is_ok()
-            } {
-                for buf in lnbuf.chunks_exact(501) {
-                    let bats = &buf[0..=500];
+                #[allow(clippy::uninit_assumed_init, invalid_value)]
+                let mut digs: [u8; DIGS] = unsafe { MaybeUninit::uninit().assume_init() };
+                digs.iter_mut()
+                    .enumerate()
+                    .fold(0, |max_left, (i, dig): (_, &mut u8)| {
+                        let max_bat = unsafe {
+                            bats[max_left..(bats.len() - DIGS + i + 1)]
+                                .iter()
+                                .enumerate()
+                                .max_by(|a, b| cmp_with_eq_as_gt(a.1, b.1))
+                                .unwrap_unchecked()
+                        };
 
-                    #[allow(clippy::uninit_assumed_init, invalid_value)]
-                    let mut digs: [u8; DIGS] = unsafe { MaybeUninit::uninit().assume_init() };
-                    digs.iter_mut()
-                        .enumerate()
-                        .fold(0, |max_left, (i, dig): (_, &mut u8)| {
-                            let max_bat = unsafe {
-                                bats[max_left..(bats.len() - DIGS + i + 1)]
-                                    .iter()
-                                    .enumerate()
-                                    .max_by(|a, b| cmp_with_eq_as_gt(a.1, b.1))
-                                    .unwrap_unchecked()
-                            };
+                        *dig = *max_bat.1;
+                        max_left + max_bat.0 + 1
+                    });
 
-                            *dig = *max_bat.1;
-                            max_left + max_bat.0 + 1
-                        });
+                let n = digs
+                    .iter()
+                    .map(|d| d - b'0')
+                    .fold(0_usize, |left, r| left * 10 + Into::<usize>::into(r));
 
-                    let n = digs
-                        .iter()
-                        .map(|d| d - b'0')
-                        .fold(0_usize, |left, r| left * 10 + Into::<usize>::into(r));
-
-                    total_joltage1.fetch_add(p1(digs), Relaxed);
-                    total_joltage2.fetch_add(n, Relaxed);
-                }
+                total_joltage1.fetch_add(p1(digs), Relaxed);
+                total_joltage2.fetch_add(n, Relaxed);
             }
         };
 
-        for _ in 0..16 {
+        // carefully optimally choosen for my pc by manual binary search
+        for _ in 0..4 {
             s.spawn(c);
         }
+
+        for ln in BufReader::new(f).lines() {
+            tx.send(ln.unwrap()).unwrap();
+        }
+        drop(tx);
     });
 
     println!(
