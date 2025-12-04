@@ -25,7 +25,7 @@ fn challenge_usize(buf: &[u8]) -> usize {
             .unwrap();
         let last_dig = bats[(first_dig.0 + 1)..].iter().max().unwrap();
 
-        println!("-->> {first_dig:?} {last_dig}");
+        // println!("-->> {first_dig:?} {last_dig}");
         let arr_max_jolts = ((first_dig.1 - b'0') * 10) + (last_dig - b'0');
         total_joltage += Into::<usize>::into(arr_max_jolts);
     }
