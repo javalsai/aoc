@@ -113,15 +113,22 @@ pub mod dl {
 }
 
 pub mod loader {
+    use std::time::{Duration, Instant};
+
     use crate::dl::Handle;
 
     pub type ChallengeFn<T> = unsafe extern "Rust" fn(&[u8]) -> T;
+    pub type TimedChallengeFn<T> = unsafe extern "Rust" fn(&[u8], &Instant) -> T;
 
     pub enum FnVariant {
         Isize(ChallengeFn<isize>),
         Usize(ChallengeFn<usize>),
         IsizeDuple(ChallengeFn<(isize, isize)>),
         UsizeDuple(ChallengeFn<(usize, usize)>),
+        TIsize(TimedChallengeFn<isize>),
+        TUsize(TimedChallengeFn<usize>),
+        TIsizeDuple(TimedChallengeFn<(isize, isize)>),
+        TUsizeDuple(TimedChallengeFn<(usize, usize)>),
     }
 
     #[derive(Debug, PartialEq)]
@@ -146,7 +153,7 @@ pub mod loader {
         /// # Safety
         ///
         /// Calls external arbitrary FNs.
-        pub unsafe fn call(&self, buf: &[u8]) -> FnRetVariant {
+        pub unsafe fn call(&self, buf: &[u8], instant: &Instant) -> FnRetVariant {
             use FnRetVariant as R;
             use FnVariant as V;
 
@@ -155,6 +162,26 @@ pub mod loader {
                 V::Usize(f) => unsafe { R::Usize((f)(buf)) },
                 V::IsizeDuple(f) => unsafe { R::IsizeDuple((f)(buf)) },
                 V::UsizeDuple(f) => unsafe { R::UsizeDuple((f)(buf)) },
+                V::TIsize(f) => unsafe { R::Isize((f)(buf, instant)) },
+                V::TUsize(f) => unsafe { R::Usize((f)(buf, instant)) },
+                V::TIsizeDuple(f) => unsafe { R::IsizeDuple((f)(buf, instant)) },
+                V::TUsizeDuple(f) => unsafe { R::UsizeDuple((f)(buf, instant)) },
+            }
+        }
+
+        /// # Safety
+        ///
+        /// Calls external arbitrary FNs.
+        pub unsafe fn call_notimer(&self, buf: &[u8]) -> Option<FnRetVariant> {
+            use FnRetVariant as R;
+            use FnVariant as V;
+
+            match self {
+                V::Isize(f) => Some(unsafe { R::Isize((f)(buf)) }),
+                V::Usize(f) => Some(unsafe { R::Usize((f)(buf)) }),
+                V::IsizeDuple(f) => Some(unsafe { R::IsizeDuple((f)(buf)) }),
+                V::UsizeDuple(f) => Some(unsafe { R::UsizeDuple((f)(buf)) }),
+                _ => None,
             }
         }
     }
@@ -171,6 +198,7 @@ pub mod loader {
 
         use ChallengeFn as C;
         use FnVariant as V;
+        use TimedChallengeFn as TC;
 
         // SAFETY: This is actually safe as it just creates the fn ptr, no weird fn with weird
         // drop.
@@ -185,7 +213,28 @@ pub mod loader {
                 .map(V::UsizeDuple)
         );
 
+        untry!(unsafe { handle.symfn::<TC<isize>>(c"challenge_t_isize") }.map(V::TIsize));
+        untry!(unsafe { handle.symfn::<TC<usize>>(c"challenge_t_usize") }.map(V::TUsize));
+        untry!(
+            unsafe { handle.symfn::<TC<(isize, isize)>>(c"challenge_t_isize_duple") }
+                .map(V::TIsizeDuple)
+        );
+        untry!(
+            unsafe { handle.symfn::<TC<(usize, usize)>>(c"challenge_t_usize_duple") }
+                .map(V::TUsizeDuple)
+        );
+
         None
+    }
+
+    pub fn load_timers_from(handle: &Handle) -> Option<&[(&str, Duration)]> {
+        // SAFETY: This is actually safe as it just creates the fn ptr, no weird fn with weird
+        // drop.
+        let at = unsafe { handle.sym::<(&str, Duration)>(c"TIMERS") }?;
+        let len = unsafe { handle.sym::<usize>(c"TIMERS_LEN") }?;
+        let len = unsafe { *len.as_ref() };
+
+        Some(unsafe { std::slice::from_raw_parts(at.as_ptr(), len) })
     }
 }
 
@@ -240,18 +289,23 @@ fn main() -> io::Result<()> {
 
     let challenge = dl::open(so_path).expect("Couldn't load dyn library");
     let challenge_main = loader::load_fn_from(&challenge).expect(concat!(
-        "Didn't find any appropiate symbol in the compiled .so file. Make sure there is one and is ",
-        stringify!(unsafe extern "Rust" fn(&[u8]) -> isize)
+        "Didn't find any appropiate symbol in the compiled .so file. Make sure there is one.",
     ));
 
     let start = Instant::now();
-    let result = unsafe { challenge_main.call(&input) };
+    let result = unsafe { challenge_main.call(&input, &start) };
 
     println!(
         "done in {:#?} and yielded result {:?}",
         start.elapsed(),
         result
     );
+    if let Some(timers) = loader::load_timers_from(&challenge) {
+        println!("with timers:");
+        for (name, timer) in timers {
+            println!(" '{name}': {timer:#?}");
+        }
+    }
 
     Ok(())
 }
@@ -260,10 +314,10 @@ const STUB_ISIZE: loader::FnVariant = loader::FnVariant::make_noop_stub_isize();
 fn measure_noop_overhead() -> (time::Duration, time::Duration) {
     let timer = Instant::now();
     // SAFETY: completely safe, not arbitrary fn but our stub
-    unsafe { STUB_ISIZE.call(&[]) };
+    unsafe { STUB_ISIZE.call(&[], &timer) };
     let cold = timer.elapsed();
     let hot = performer::get_avg_runt(u16::MAX.into(), || unsafe {
-        STUB_ISIZE.call(&[]);
+        STUB_ISIZE.call_notimer(&[]);
     });
 
     (cold, hot)
