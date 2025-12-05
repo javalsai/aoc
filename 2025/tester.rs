@@ -113,7 +113,7 @@ pub mod dl {
 }
 
 pub mod loader {
-    use std::time::{Duration, Instant};
+    use std::{fmt::Display, time::{Duration, Instant}};
 
     use crate::dl::Handle;
 
@@ -137,6 +137,17 @@ pub mod loader {
         Usize(usize),
         IsizeDuple((isize, isize)),
         UsizeDuple((usize, usize)),
+    }
+
+    impl Display for FnRetVariant {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                FnRetVariant::Isize(v) => write!(f, "isize {v}"),
+                FnRetVariant::Usize(v) => write!(f, "usize {v}"),
+                FnRetVariant::IsizeDuple((v1, v2)) => write!(f, "isize ({v1}, {v2})"),
+                FnRetVariant::UsizeDuple((v1, v2)) => write!(f, "usize ({v1}, {v2})"),
+            }
+        }
     }
 
     impl FnVariant {
@@ -317,7 +328,7 @@ fn run_input(day: &str, input: &[u8], rustc: Option<&str>) -> io::Result<()> {
 
     let total_time = start.elapsed();
     println!(
-        "\x1b[32mdone\x1b[0m in \x1b[35m{total_time:#?}\x1b[0m and yielded result \x1b[36m{result:?}\x1b[0m",
+        "\x1b[32mdone\x1b[0m in \x1b[4;35m{total_time:#?}\x1b[0m with \x1b[36m{result}\x1b[0m",
     );
     if let Some(timers) = loader::load_timers_from(&challenge) {
         let mut prev_t = Duration::ZERO;
