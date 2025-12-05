@@ -7,7 +7,7 @@ use std::{
     io::{self, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{self, Instant},
+    time::{self, Duration, Instant},
 };
 
 pub mod dl {
@@ -268,9 +268,14 @@ pub type ChallengeFn = unsafe extern "Rust" fn(&[u8]) -> isize;
 fn main() -> io::Result<()> {
     let rustc = env::var("RUSTC_PATH").ok();
 
-    let Ok([day, input]) = std::env::args().skip(1).next_chunk() else {
-        eprintln!("\x1b[1;31mUsage: $0 <PATH.RS> <FILEPATH|->");
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.len() < 2 {
+        eprintln!("\x1b[1;31mUsage: $0 <PATHS.RS> <FILEPATH|->");
         return Ok(());
+    };
+
+    let [days @ .., input] = &args[..] else {
+        unreachable!("already checked arg count before");
     };
 
     let (noop_overhead_cold, noop_overhead_hot) = measure_noop_overhead();
@@ -278,32 +283,53 @@ fn main() -> io::Result<()> {
         "noop fn takes {:#?} hot and {:#?} cold",
         noop_overhead_hot, noop_overhead_cold
     );
+    println!("\x1b[33m prog: buferring input...\x1b[0m");
+    let input = buffer_input(input)?;
 
+    if days.len() == 1 {
+        println!();
+        run_input(&days[0], &input, rustc.as_deref())
+    } else {
+        for day in days {
+            println!();
+            println!("\x1b[1;3;4;41m{day}\x1b[0m:");
+            run_input(day, &input, rustc.as_deref())?;
+        }
+
+        Ok(())
+    }
+}
+
+fn run_input(day: &str, input: &[u8], rustc: Option<&str>) -> io::Result<()> {
     let rs_path = PathBuf::from(&day);
     assert_eq!(rs_path.extension(), Some(OsStr::new("rs")));
     let so_path = rs_path.with_extension("so");
 
-    compile(&rs_path, &so_path, rustc.as_deref())?;
-    println!("\x1b[33mBuferring input...\x1b[0m");
-    let input = buffer_input(&input)?;
+    compile(&rs_path, &so_path, rustc)?;
 
     let challenge = dl::open(so_path).expect("Couldn't load dyn library");
-    let challenge_main = loader::load_fn_from(&challenge).expect(concat!(
+    let challenge_main = loader::load_fn_from(&challenge).expect(
         "Didn't find any appropiate symbol in the compiled .so file. Make sure there is one.",
-    ));
+    );
 
     let start = Instant::now();
-    let result = unsafe { challenge_main.call(&input, &start) };
+    let result = unsafe { challenge_main.call(input, &start) };
 
+    let total_time = start.elapsed();
     println!(
-        "done in {:#?} and yielded result {:?}",
-        start.elapsed(),
-        result
+        "\x1b[32mdone\x1b[0m in \x1b[35m{total_time:#?}\x1b[0m and yielded result \x1b[36m{result:?}\x1b[0m",
     );
     if let Some(timers) = loader::load_timers_from(&challenge) {
-        println!("with timers:");
-        for (name, timer) in timers {
-            println!(" '{name}': {timer:#?}");
+        let mut prev_t = Duration::ZERO;
+        for (name, cum_timer) in timers {
+            let timer = *cum_timer - prev_t;
+            println!(
+                " '\x1b[36m{name}\x1b[0m': \x1b[35m{timer:#?}\x1b[0m (\x1b[1;33m{:.2}%\x1b[0m) \x1b[35m{cum_timer:#?}\x1b[0m (\x1b[1;33m{:.2}%\x1b[0m)",
+                (timer.as_nanos() as f64 / total_time.as_nanos() as f64) * 100.0,
+                (cum_timer.as_nanos() as f64 / total_time.as_nanos() as f64) * 100.0
+            );
+
+            prev_t = *cum_timer;
         }
     }
 
@@ -334,14 +360,14 @@ fn compile(rs: &Path, so: &Path, rustc: Option<&str>) -> io::Result<()> {
 
             // No need to recompile
             if so_metadata.modified()? > rs_metadata.modified()? {
-                println!("\x1b[32mChallenge already compiled\x1b[0m");
+                println!("\x1b[32m ok: challenge already compiled\x1b[0m");
                 return Ok(());
             }
         }
     }
 
     // Recompile
-    println!("\x1b[33mCompiling {rs:#?}...\x1b[0m");
+    println!("\x1b[33m prog: compiling {rs:#?}...\x1b[0m");
     let exit = Command::new(rustc.unwrap_or("rustc"))
         .args([
             "--crate-type=cdylib",
