@@ -1,15 +1,21 @@
+use std::{
+    iter::FromIterator,
+    mem::transmute,
+    ops::RangeInclusive,
+    ptr,
+    time::{Duration, Instant},
+};
+
 #[unsafe(no_mangle)]
-pub static mut TIMERS: [(&str, Duration); TIMERS_LEN] = [
-    ("insert", Duration::ZERO),
-    ("count", Duration::ZERO),
-];
+pub static mut TIMERS: [(&str, Duration); TIMERS_LEN] =
+    [("insert", Duration::ZERO), ("count", Duration::ZERO)];
 
 #[unsafe(no_mangle)]
 pub static TIMERS_LEN: usize = 2;
-use std::{ops::RangeInclusive, time::{Duration, Instant}};
 
 pub type RangeU = u128;
 
+#[derive(Debug)]
 pub struct BIntervalNode<T: Ord + Copy> {
     value: RangeInclusive<T>,
     len: usize,
@@ -65,9 +71,10 @@ impl<T: Ord + Copy> BIntervalNode<T> {
         let total_len = self.len;
         let e_len = self._swap_ptrs_with(which);
         // SAFETY: its different fields
-        let sub = unsafe { copy_mut(self._get_which(which).as_mut().unwrap()) };
+        let sub = unsafe { copy_mut(self._get_which(!which).as_mut().unwrap()) };
 
-        self.len -= sub.len + e_len;
+        self.len -= sub.len;
+        self.len += e_len;
         sub.len = total_len;
     }
 
@@ -87,28 +94,50 @@ impl<T: Ord + Copy> BIntervalNode<T> {
     ///
     ///  also returns `E`s length if existent or 0
     pub fn _swap_ptrs_with(self: &mut Box<Self>, which: bool) -> usize {
-        unsafe fn copy<T>(optbox: &T) -> T {
-            unsafe { std::mem::transmute_copy::<_, T>(optbox) }
-        }
-        unsafe fn copy_mut<'a, T>(mutref: *mut T) -> &'a mut T {
-            unsafe { &mut *mutref }
+        unsafe fn rotate<T: Copy>(a: *mut T, b: *mut T, c: *mut T) {
+            unsafe {
+                let tmp = a.read_volatile();
+                a.write_volatile(b.read_volatile());
+                b.write_volatile(c.read_volatile());
+                c.write_volatile(tmp);
+            }
         }
 
         // SAFETY: we clone the mut ptr to separate their lifetime relation, its fine as long as we
         // dont walk into the `&mut Option<...>`s (`lt` and `gt` field ptrs) and treat it only as
         // the node field's ptr to be updated
-        let my_sub_field_ptr = unsafe { copy_mut(self._get_which(which)) }; // a
-        let my_sub_ptr = unsafe { copy_mut(my_sub_field_ptr.as_mut().unwrap()) }; // B
-        let my_subs_other_sub_field_ptr = unsafe { copy_mut(my_sub_ptr._get_which(!which)) }; // y
+        let my_sub_field_ptr = ptr::from_mut(self._get_which(which)); // a
+        let my_sub_ptr = ptr::from_mut(unsafe { &mut *my_sub_field_ptr }.as_mut().unwrap()); // B
+        let my_sub_other_sub_field_ptr =
+            ptr::from_mut(unsafe { &mut *my_sub_ptr }._get_which(!which)); // y
 
         // SAFETY: Copied because it can't move out as the original location must remain valid.
         // However this is a triangular rotation and the final place will end up being replaced
         // too, so this is safe.
-        *my_sub_field_ptr = unsafe { copy(my_subs_other_sub_field_ptr) };
-        *my_subs_other_sub_field_ptr = Some(unsafe { copy(self) });
-        *self = unsafe { copy(my_sub_ptr) };
+        // unsafe { my_sub_field_ptr.write_volatile(copy(my_sub_other_sub_field_ptr)) };
+        // // forget(unsafe { replace(&mut *my_sub_field_ptr, copy(my_sub_other_sub_field_ptr)) });
+        // let selfptr = unsafe { replace(self, copy(my_sub_ptr)) };
+        // unsafe { my_sub_other_sub_field_ptr.write_volatile(Some(selfptr)) };
+        // // forget(unsafe { (&mut *my_sub_other_sub_field_ptr).replace(copy(self)) });
+        // // unsafe { ptr::from_mut(self).write_volatile(copy(my_sub_ptr)) };
+        // // forget(unsafe { replace(self, copy(my_sub_ptr)) });
 
-        my_sub_field_ptr.as_ref().map(|n| n.len).unwrap_or(0)
+        // my_sub_field_ptr <- my_sub_other_sub_field_ptr <- self
+
+        unsafe {
+            #[allow(clippy::missing_transmute_annotations, clippy::useless_transmute)]
+            rotate::<*mut ()>(
+                transmute(my_sub_field_ptr),
+                transmute(my_sub_other_sub_field_ptr),
+                transmute(self),
+            )
+        };
+
+        if let Some(n) = unsafe { &*ptr::from_ref(&my_sub_other_sub_field_ptr).read_volatile() } {
+            n.len
+        } else {
+            0
+        }
     }
 
     /// Returns `true` if the len count has grown somewhere down the line
@@ -127,10 +156,10 @@ impl<T: Ord + Copy> BIntervalNode<T> {
                 self.len += 1;
             }
 
-            // first of all, do we balance?
-            // maybe >= 2 will balance more but itd be too unstable, TODO play with constant
+            // first of all, do we balance? doesnt seem to make much of an impact, also > 2 (3 or
+            // more) seems to be good enough while not balancing too much
             if (self.len + 1) / (next_node.len + 1) > 2 {
-                // self._swap_with(is_gt);
+                self._swap_with(is_gt);
             }
 
             inserted
@@ -156,6 +185,7 @@ impl<T: Ord + Copy> BIntervalNode<T> {
     }
 }
 
+#[derive(Debug)]
 struct BIntervalTree<T: Ord + Copy> {
     first_node: Box<BIntervalNode<T>>,
 }
@@ -201,6 +231,7 @@ extern "Rust" fn challenge_t_usize(buf: &[u8], t: &Instant) -> usize {
     });
 
     let ranges = BIntervalTree::<RangeU>::from_iter(ran_iter);
+    // println!("{ranges:#?}");
 
     unsafe { TIMERS[0].1 = t.elapsed() };
 
