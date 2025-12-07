@@ -6,10 +6,6 @@ enum Op {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
-    fn d(d: u8) -> usize {
-        if d == b' ' { 0 } else { (d - b'0') as usize }
-    }
-
     use Op::*;
 
     let mut iter = buf[0..(buf.len() - 1)]
@@ -28,7 +24,7 @@ pub unsafe extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
         })
         .collect::<Vec<_>>();
 
-    iter.enumerate().for_each(|(bottom_idx, ln)| {
+    iter.for_each(|ln| {
         let mut idx = 0;
         ln.filter_map(|n_str| {
             let r = (idx, n_str);
@@ -45,7 +41,7 @@ pub unsafe extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
         });
     });
 
-    println!("{ops:?}");
+    // println!("{ops:?}");
     ops.iter().fold(0, |acc, (opacc, vec, _)| {
         let n: usize = match opacc {
             Mul => vec.iter().map(|(a, _)| a).product(),
@@ -59,7 +55,7 @@ fn insert_dig(into: &mut Vec<(usize, u32)>, at: usize, dig: u8) {
     if dig != b' ' {
         if let Some((mref, len)) = into.get_mut(at) {
             *mref += (dig - b'0') as usize * 10usize.pow(*len);
-            dbg!(mref);
+            // dbg!(mref);
             *len += 1;
         } else {
             let mut i = into.len();
