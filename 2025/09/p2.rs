@@ -4,6 +4,8 @@
 //!
 //! I think even adyacent is within the "other rectangle thing", because
 
+use std::ops::Range;
+
 #[unsafe(no_mangle)]
 pub extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
     // I do see how to make this in idk if O(n) or O(nlogn), but ima O(n^2) just at first
@@ -53,26 +55,37 @@ fn is_really_contained(
         (rect0.0.max(rect1.0), rect0.1.max(rect1.1)),
     );
 
-    let xran = (rect0.0 + 1)..=(rect1.0 - 1);
-    let yran = (rect0.1 + 1)..=(rect1.1 - 1);
+    let xran = (rect0.0 + 1)..(rect1.0);
+    let yran = (rect0.1 + 1)..(rect1.1);
 
     // Optimization, no need to check each range's point
     for (edge1, edge2) in edges {
         if edge1.0 == edge2.0 && xran.contains(&edge1.0) {
-            for y in edge1.1.min(edge2.1)..edge1.1.max(edge2.1) {
-                if yran.contains(&y) {
-                    return false;
-                }
+            if rangeoverlap(&mkrange(edge1.1, edge2.1), &yran) {
+                return false;
             }
         }
 
         if edge1.1 == edge2.1 && yran.contains(&edge1.1) {
-            for x in edge1.0.min(edge2.0)..edge1.0.max(edge2.0) {
-                if xran.contains(&x) {
-                    return false;
-                }
+            if rangeoverlap(&mkrange(edge1.0, edge2.0), &xran) {
+                return false;
             }
         }
+    }
+
+    true
+}
+
+fn mkrange<T: Ord + Copy>(a: T, b: T) -> Range<T> {
+    a.min(b)..a.max(b)
+}
+
+fn rangeoverlap<T: Ord>(a: &Range<T>, b: &Range<T>) -> bool {
+    if a.end <= b.start {
+        return false;
+    }
+    if a.start >= b.end {
+        return false;
     }
 
     true
