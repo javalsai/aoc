@@ -8,40 +8,38 @@ use std::ops::Range;
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
-    // I do see how to make this in idk if O(n) or O(nlogn), but ima O(n^2) just at first
     let coords = buf[..(buf.len() - 1)]
         .split(|&b| b == b'\n')
         .map(parse_ln)
         .collect::<Vec<_>>();
 
     // assuming each coord is contiguous to the prev one
-    let edges = coords
+    let mut edges = coords
         .iter()
         .cloned()
         .chain([coords[0]])
         .map_windows(|&[a, b]| (a, b))
         .collect::<Vec<_>>();
 
-    let mut area = 0;
-    for coor1 in &coords {
-        for coor2 in &coords {
+    edges.sort_by(|(a1, a2), (b1, b2)| {
+        (a1.0.abs_diff(a2.0) + a1.1.abs_diff(a2.1))
+            .cmp(&(b1.0.abs_diff(b2.0) + b1.1.abs_diff(b2.1)))
+    });
+
+    let mut max_area = 0;
+    for (i, coor1) in coords.iter().enumerate() {
+        for coor2 in coords.iter().skip(i) {
             let dx = coor1.0.abs_diff(coor2.0) + 1;
             let dy = coor1.1.abs_diff(coor2.1) + 1;
-            let this_area = dx * dy;
+            let area = dx * dy;
 
-            // println!("{coor1:?}, {coor2:?}");
             if is_really_contained((*coor1, *coor2), &edges) {
-                area = area.max(this_area);
+                max_area = max_area.max(area);
             }
-
-            // println!(
-            //     "{},{} {},{} | {this_area}",
-            //     coor1.0, coor1.1, coor2.0, coor2.1
-            // );
         }
     }
 
-    area
+    max_area
 }
 
 /// If any bouding vertex is well within (not sitting on a rectangle's edge), the rectangle is not
@@ -60,16 +58,18 @@ fn is_really_contained(
 
     // Optimization, no need to check each range's point
     for (edge1, edge2) in edges {
-        if edge1.0 == edge2.0 && xran.contains(&edge1.0) {
-            if rangeoverlap(&mkrange(edge1.1, edge2.1), &yran) {
-                return false;
-            }
+        if edge1.0 == edge2.0
+            && xran.contains(&edge1.0)
+            && rangeoverlap(&mkrange(edge1.1, edge2.1), &yran)
+        {
+            return false;
         }
 
-        if edge1.1 == edge2.1 && yran.contains(&edge1.1) {
-            if rangeoverlap(&mkrange(edge1.0, edge2.0), &xran) {
-                return false;
-            }
+        if edge1.1 == edge2.1
+            && yran.contains(&edge1.1)
+            && rangeoverlap(&mkrange(edge1.0, edge2.0), &xran)
+        {
+            return false;
         }
     }
 
