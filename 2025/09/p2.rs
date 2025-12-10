@@ -4,7 +4,7 @@
 //!
 //! I think even adyacent is within the "other rectangle thing", because
 
-use std::ops::Range;
+use std::{collections::BinaryHeap, ops::Range};
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
@@ -14,27 +14,29 @@ pub extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
         .collect::<Vec<_>>();
 
     // assuming each coord is contiguous to the prev one
-    let mut edges = coords
+    let edges = coords
         .iter()
         .cloned()
         .chain([coords[0]])
-        .map_windows(|&[a, b]| (a, b))
-        .collect::<Vec<_>>();
+        .map_windows(|&[a, b]| (a.0.abs_diff(b.0) + a.1.abs_diff(b.1), (a, b)))
+        .collect::<BinaryHeap<_>>();
 
-    edges.sort_by(|(a1, a2), (b1, b2)| {
-        (a1.0.abs_diff(a2.0) + a1.1.abs_diff(a2.1))
-            .cmp(&(b1.0.abs_diff(b2.0) + b1.1.abs_diff(b2.1)))
-    });
+    //     edges.sort_by(|(a1, a2), (b1, b2)| {
+    //         (a1.0.abs_diff(a2.0) + a1.1.abs_diff(a2.1))
+    //             .cmp(&(b1.0.abs_diff(b2.0) + b1.1.abs_diff(b2.1)))
+    //     });
 
     let mut max_area = 0;
     for (i, coor1) in coords.iter().enumerate() {
-        for coor2 in coords.iter().skip(i) {
+        for coor2 in coords.iter().skip(i + 1) {
             let dx = coor1.0.abs_diff(coor2.0) + 1;
             let dy = coor1.1.abs_diff(coor2.1) + 1;
             let area = dx * dy;
 
-            if is_really_contained((*coor1, *coor2), &edges) {
-                max_area = max_area.max(area);
+            if area > max_area
+                && is_really_contained((*coor1, *coor2), edges.iter().map(|&(_, v)| v))
+            {
+                max_area = area;
             }
         }
     }
@@ -46,7 +48,7 @@ pub extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
 /// well contained
 fn is_really_contained(
     (rect0, rect1): ((usize, usize), (usize, usize)),
-    edges: &[((usize, usize), (usize, usize))],
+    edges: impl Iterator<Item = ((usize, usize), (usize, usize))>,
 ) -> bool {
     let (rect0, rect1) = (
         (rect0.0.min(rect1.0), rect0.1.min(rect1.1)),
@@ -81,10 +83,7 @@ fn mkrange<T: Ord + Copy>(a: T, b: T) -> Range<T> {
 }
 
 fn rangeoverlap<T: Ord>(a: &Range<T>, b: &Range<T>) -> bool {
-    if a.end <= b.start {
-        return false;
-    }
-    if a.start >= b.end {
+    if a.end <= b.start || a.start >= b.end {
         return false;
     }
 
