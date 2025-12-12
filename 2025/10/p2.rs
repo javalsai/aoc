@@ -1,20 +1,29 @@
-#![feature(slice_split_once, exact_div, never_type)]
+#![feature(slice_split_once, exact_div, never_type, iterator_try_collect)]
 
 use std::{
-    collections::{HashMap, HashSet, hash_set},
+    collections::{HashMap, HashSet},
+    env::Vars,
     fmt,
 };
 
-use crate::eq::{Equation, var::VarKnowledge};
+use crate::eq::{
+    Equation, Known,
+    var::{Var, VarStrategy},
+};
 
 pub mod eq {
     use std::{
         fmt,
-        ops::DivAssign,
+        ops::{DivAssign, Index, IndexMut},
         // ops::{AddAssign, MulAssign},
     };
 
-    use crate::gcd;
+    use crate::{
+        eq::{param::Parametrization, var::Var},
+        gcd,
+    };
+
+    pub type Known = (Var, i32);
 
     #[derive(Clone)]
     pub struct Equation {
@@ -28,6 +37,20 @@ pub mod eq {
                 .iter_mut()
                 .for_each(|param| *param = param.div_exact(rhs).unwrap());
             self.term = self.term.div_exact(rhs).unwrap();
+        }
+    }
+
+    impl Index<Var> for Equation {
+        type Output = i32;
+
+        fn index(&self, index: Var) -> &Self::Output {
+            &self.parameters[index.0]
+        }
+    }
+
+    impl IndexMut<Var> for Equation {
+        fn index_mut(&mut self, index: Var) -> &mut Self::Output {
+            &mut self.parameters[index.0]
         }
     }
 
@@ -103,16 +126,28 @@ pub mod eq {
             &self.parameters
         }
 
-        pub fn has_param(&self, param: usize) -> bool {
-            self.parameters.get(param).is_some_and(|&p| p != 0)
+        pub fn vars_with_params(&self) -> impl Iterator<Item = (Var, i32)> {
+            self.parameters
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(i, param)| (Var(i), param))
         }
 
-        pub fn param_idxs(&self) -> impl Iterator<Item = usize> {
+        pub fn get(&self, param: Var) -> Option<&i32> {
+            self.parameters.get(param.0)
+        }
+
+        pub fn has_param(&self, param: Var) -> bool {
+            self.get(param).is_some_and(|&p| p != 0)
+        }
+
+        pub fn non_zero_vars(&self) -> impl Iterator<Item = Var> {
             self.parameters
                 .iter()
                 .enumerate()
                 .filter(|&(_, &v)| v != 0)
-                .map(|(idx, _)| idx)
+                .map(|(idx, _)| Var(idx))
         }
 
         pub fn left_padded(&self) -> usize {
@@ -205,98 +240,17 @@ pub mod eq {
             self.parameters.iter().all(|&v| v == 0)
         }
 
-        // pub fn has_relation(&self) -> Option<(usize, (i32, usize))> {
-        //     if self.term != 0 {
-        //         return None;
-        //     }
+        pub fn range(&self) -> usize {
+            self.parameters.iter().filter(|&&v| v != 0).count()
+        }
 
-        //     let (fonly_idx, &fonly_val) =
-        //         self.parameters.iter().enumerate().find(|&(_, &v)| v != 0)?;
-        //     let (sonly_idx, &sonly_val) = self
-        //         .parameters
-        //         .iter()
-        //         .enumerate()
-        //         .skip(fonly_idx + 1)
-        //         .find(|&(_, &v)| v != 0)?;
+        pub fn dimension(&self) -> usize {
+            self.parameters.len()
+        }
 
-        //     if self.parameters.iter().enumerate().all(|(i, &v)| {
-        //         if i == fonly_idx || i == sonly_idx {
-        //             return true;
-        //         }
-
-        //         v == 0
-        //     }) {
-        //         // fonly_val * fonly_idx = -sonly_val * sonly_idx, either:
-        //         //  fonly_idx = -(sonly_val/fonly_val) * sonly_idx
-        //         //  sonly_idx = -(fonly_val/sonly_val) * fonly_idx
-
-        //         if sonly_val > fonly_val {
-        //             Some((
-        //                 fonly_idx,
-        //                 (-sonly_val.div_exact(fonly_val).unwrap(), sonly_idx),
-        //             ))
-        //         } else {
-        //             Some((
-        //                 sonly_idx,
-        //                 (-fonly_val.div_exact(sonly_val).unwrap(), fonly_idx),
-        //             ))
-        //         }
-        //     } else {
-        //         None
-        //     }
-        // }
-
-        // pub fn has_relation(&self) -> Option<(usize, (i32, i32, usize))> {
-        //     let (fonly_idx, &fonly_val) =
-        //         self.parameters.iter().enumerate().find(|&(_, &v)| v != 0)?;
-        //     let (sonly_idx, &sonly_val) = self
-        //         .parameters
-        //         .iter()
-        //         .enumerate()
-        //         .skip(fonly_idx + 1)
-        //         .find(|&(_, &v)| v != 0)?;
-
-        //     if self.parameters.iter().enumerate().all(|(i, &v)| {
-        //         if i == fonly_idx || i == sonly_idx {
-        //             return true;
-        //         }
-
-        //         v == 0
-        //     }) {
-        //         // fonly_val * fonly_idx = term - sonly_val * sonly_idx, either:
-        //         //  fonly_idx = (term/fonly_val) - (sonly_val/fonly_val) * sonly_idx
-        //         //  sonly_idx = (term/sonly_val) - (fonly_val/sonly_val) * fonly_idx
-
-        //         dbg!((fonly_val, sonly_val));
-        //         if sonly_val.abs() > fonly_val.abs() || fonly_val.abs() == 1 {
-        //             dbg!(self.term, fonly_val);
-        //             Some((
-        //                 fonly_idx,
-        //                 (
-        //                     self.term.div_exact(fonly_val).unwrap(),
-        //                     -sonly_val.div_exact(fonly_val).unwrap(),
-        //                     sonly_idx,
-        //                 ),
-        //             ))
-        //         } else {
-        //             Some((
-        //                 sonly_idx,
-        //                 (
-        //                     self.term.div_exact(sonly_val).unwrap(),
-        //                     -fonly_val.div_exact(sonly_val).unwrap(),
-        //                     fonly_idx,
-        //                 ),
-        //             ))
-        //         }
-        //     } else {
-        //         None
-        //     }
-        // }
-
-        pub fn has_known(&self) -> Option<(usize, i32)> {
-            let (only_idx, &only_val) =
-                self.parameters.iter().enumerate().find(|&(_, &v)| v != 0)?;
-            if self.parameters.iter().enumerate().all(|(i, &v)| {
+        pub fn has_known(&self) -> Option<Known> {
+            let (only_idx, only_val) = self.vars_with_params().find(|&(_, v)| v != 0)?;
+            if self.vars_with_params().all(|(i, v)| {
                 if i == only_idx {
                     return true;
                 }
@@ -322,64 +276,70 @@ pub mod eq {
                 .sum::<i32>()
                 == self.term
         }
+
+        pub fn place_param(&mut self, var: Var, val: i32) {
+            let term_left = self[var] * val;
+            self.term -= term_left;
+            self[var] = 0;
+        }
+
+        pub fn try_parametrize(&self, var: Var) -> Option<Parametrization> {
+            // instead of moving all other parameters to the other side, swap with one with the
+            // term
+
+            let div = -self[var];
+            let offset = -self.term.div_exact(div)?;
+
+            let others = self
+                .vars_with_params()
+                .filter(|&(i, param)| param != 0 && i != var)
+                .map(|(idx, param)| Some((idx, param.div_exact(div)?)))
+                .try_collect::<Vec<_>>()?;
+
+            Some(Parametrization { others, offset })
+        }
+    }
+
+    pub mod param {
+        use std::fmt;
+
+        use crate::eq::var::Var;
+
+        #[derive(Clone)]
+        pub struct Parametrization {
+            pub others: Vec<(Var, i32)>,
+            pub offset: i32,
+        }
+
+        impl fmt::Debug for Parametrization {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                for other in &self.others {
+                    write!(f, "{}{:?} + ", other.1, other.0)?;
+                }
+
+                write!(f, "{}", self.offset)
+            }
+        }
     }
 
     pub mod var {
-        #[derive(Clone, Copy)]
+        use std::fmt;
+
+        use crate::eq::param::Parametrization;
+
+        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+        pub struct Var(pub(crate) usize);
+
+        impl fmt::Debug for Var {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", ('a'..='z').cycle().nth(self.0).unwrap())
+            }
+        }
+
+        #[derive(Clone, Debug)]
         pub enum VarStrategy {
             BruteForce,
-            DependantOn(!),
-            Known(i32),
-        }
-
-        #[derive(Clone, Copy)]
-        pub struct VarKnowledge {
-            var_idx: usize,
-            strategy: VarStrategy,
-        }
-    }
-}
-
-#[allow(dead_code)]
-mod __hide {
-    use std::{cmp::Ordering, iter::Sum, ops::Add};
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum EqEvalRes {
-        Correct,
-        Undershoot,
-        Overshoot,
-    }
-
-    impl Add for EqEvalRes {
-        type Output = Self;
-
-        fn add(self, rhs: Self) -> Self::Output {
-            use EqEvalRes::*;
-
-            match (self, rhs) {
-                (Correct, x) => x,
-                (_, Overshoot) | (Overshoot, _) => Overshoot,
-                (Undershoot, _) => Undershoot,
-            }
-        }
-    }
-
-    impl Sum<Self> for EqEvalRes {
-        fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-            iter.reduce(|a, b| a + b).unwrap_or(Self::Correct)
-        }
-    }
-
-    impl From<Ordering> for EqEvalRes {
-        fn from(value: Ordering) -> Self {
-            use EqEvalRes::*;
-
-            match value {
-                Ordering::Less => Undershoot,
-                Ordering::Equal => Correct,
-                Ordering::Greater => Overshoot,
-            }
+            DependantOn(Parametrization),
         }
     }
 }
@@ -431,7 +391,15 @@ impl Machine {
         }
     }
 
-    fn is_known(&self) -> Result<Vec<(usize, i32)>, Vec<(usize, i32)>> {
+    fn range(&self) -> usize {
+        self.equations.iter().filter(|eq| !eq.is_empty()).count()
+    }
+
+    fn raw_dimension(&self) -> usize {
+        self.equations.first().map(|eq| eq.dimension()).unwrap_or(0)
+    }
+
+    fn reduce(mut self) -> Result<Vec<Known>, (Self, Vec<Known>)> {
         let knowns = self
             .equations
             .iter()
@@ -441,28 +409,35 @@ impl Machine {
         if knowns.len() == self.buttons.len() {
             Ok(knowns)
         } else {
-            Err(knowns)
+            for &(known_idx, known_val) in &knowns {
+                for eq in &mut self.equations {
+                    eq.place_param(known_idx, known_val);
+                }
+            }
+
+            self.equations.sort_by_key(|eq| eq.left_padded());
+            Err((self, knowns))
         }
     }
 
     fn _find_other_single_eq_with_param(
         &self,
         my_i: usize,
-        param: usize,
+        var: Var,
     ) -> Option<(usize, &Equation)> {
         let iter = self
             .equations
             .iter()
             .enumerate()
             .filter(|&(idx, _)| idx != my_i)
-            .filter(|&(_, eq)| eq.has_param(param));
+            .filter(|&(_, eq)| eq.has_param(var));
         if iter.count() == 1 {
             let mut iter = self
                 .equations
                 .iter()
                 .enumerate()
                 .filter(|&(idx, _)| idx != my_i)
-                .filter(|&(_, eq)| eq.has_param(param));
+                .filter(|&(_, eq)| eq.has_param(var));
 
             Some(iter.next().unwrap())
         } else {
@@ -470,16 +445,19 @@ impl Machine {
         }
     }
 
-    fn _strategies(&self, hash_set: &mut HashSet<usize>, i: usize, eq1: &Equation, param: usize) {
-        println!("param {param} is unique here (eq1) (so other things can be made from this)");
+    fn _strategies(&self, hash_set: &mut HashSet<Var>, i: usize, eq1: &Equation, var: Var) {
+        println!("param {var:?} is unique here (eq1) (so other things can be made from this)");
 
-        let leading_param = param;
+        let leading_param = var;
         hash_set.insert(leading_param);
 
-        for other_param in eq1.param_idxs().filter(|param| !hash_set.contains(param)) {
+        for other_param in eq1
+            .non_zero_vars()
+            .filter(|param| !hash_set.contains(param))
+        {
             let mut yet_this_other_branch_hash_set = hash_set.clone();
             yet_this_other_branch_hash_set.insert(other_param);
-            println!(" could make {other_param} from it");
+            println!(" could make {other_param:?} from it");
 
             if let Some((i, other)) = self._find_other_single_eq_with_param(i, other_param) {
                 println!("{other:?}");
@@ -488,25 +466,93 @@ impl Machine {
         }
     }
 
-    fn strategies(&self) {
-        let strategy = HashMap::<usize, VarKnowledge>::new();
-        let known_ones = HashSet::<usize>::from_iter(strategy.keys().cloned());
+    /// Will fail if the parametrization is fractional
+    fn parametrize_system_based_on(
+        &self,
+        mut strategies: Vec<(Var, VarStrategy)>,
+    ) -> Option<Vec<(Var, VarStrategy)>> {
+        fn deducible_var(var: Var, strategies: &[(Var, VarStrategy)]) -> bool {
+            strategies.iter().any(|strat| strat.0 == var)
+        }
 
-        for (i, eq1) in self.equations.iter().enumerate() {
-            for param in eq1.param_idxs().filter(|param| !known_ones.contains(param)) {
-                if self
-                    .equations
-                    .iter()
-                    .enumerate()
-                    .filter(|&(j, _)| i != j)
-                    .all(|(_, eq)| !eq.has_param(param))
-                {
-                    let mut branch_set = known_ones.clone();
-                    branch_set.insert(param);
-                    self._strategies(&mut branch_set, i, eq1, param);
-                }
+        let mut found_any = true;
+
+        while found_any {
+            println!("{strategies:?}");
+            found_any = false;
+
+            for eq in self.equations.iter() {
+                let (relative_to, deducible_eq) = {
+                    if let Some(first_unknown) = eq
+                        .non_zero_vars()
+                        .find(|&var| !deducible_var(var, &strategies))
+                    {
+                        println!(" {first_unknown:?} ({eq:?})");
+                        if eq
+                            .non_zero_vars()
+                            .filter(|&var| var != first_unknown)
+                            .all(|var| deducible_var(var, &strategies))
+                        {
+                            (first_unknown, eq)
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        // all are knowns, so filter out
+                        continue;
+                    }
+                };
+
+                // ughhh, gotta find all equations with vars < n_params, not the immediate one bcs
+                // in this system we need to parametrize m which is in an eq with 3 vars and theres
+                // 3 paramaters, i need to parametrize it among others...
+                println!(
+                    "   {:?}",
+                    deducible_eq.try_parametrize(relative_to),
+                );
+                found_any = true;
+
+                strategies.push((
+                    relative_to,
+                    VarStrategy::DependantOn(deducible_eq.try_parametrize(relative_to)?),
+                ));
             }
         }
+
+        if self.equations.iter().all(|eq| {
+            eq.non_zero_vars()
+                .all(|var| deducible_var(var, &strategies))
+        }) {
+            Some(strategies)
+        } else {
+            None
+        }
+    }
+
+    /// This will parametrize ALL the system given the number of parameters. It will get a list of
+    /// the only strategy that doesn't involve a fractional equation. Hence all strategies will be
+    /// with and give integers.
+    fn parametrize(&self, num_params: usize) -> Vec<Vec<(Var, VarStrategy)>> {
+        self.equations
+            .iter()
+            .filter(|eq| eq.range() == num_params + 1)
+            .flat_map(|eq1| {
+                eq1.non_zero_vars()
+                    .filter_map(|param| Some((param, eq1.try_parametrize(param)?)))
+                    .filter_map(|initial_param| {
+                        let mut knowns = initial_param
+                            .1
+                            .others
+                            .iter()
+                            .map(|e| (e.0, VarStrategy::BruteForce))
+                            .collect::<Vec<_>>();
+
+                        knowns.push((initial_param.0, VarStrategy::DependantOn(initial_param.1)));
+
+                        self.parametrize_system_based_on(knowns)
+                    })
+            })
+            .collect()
     }
 
     // fn relations(&self) -> Vec<(usize, (i32, i32, usize))> {
@@ -610,32 +656,29 @@ pub extern "Rust" fn challenge_usize(buf: &[u8]) -> usize {
         if i != 143 {
             continue;
         }
-        match machine.is_known() {
+        match machine.reduce() {
             Ok(knowns) => knowns
                 .iter()
                 .for_each(|&(_, count)| total_count += count as usize),
-            Err(knowns) => {
-                // if [6, 8, 11, 13, 16, 22].contains(&i) {
-                //     continue;
-                // }
+            Err((machine, knowns)) => {
+                let parameter_count = machine.raw_dimension() - knowns.len() - machine.range();
 
                 println!("{i}: {machine:?}");
-                println!("{knowns:?} {}/{}", knowns.len(), machine.len);
-
-                let mut skips = Vec::new();
-                let mut solution_buffer = vec![0; machine.buttons.len()];
-                for (known_idx, known_val) in knowns {
-                    assert!(known_val.is_positive() || known_val == 0);
-                    solution_buffer[known_idx] = known_val.unsigned_abs();
-                    skips.push(known_idx);
-                }
+                println!("needed params: {}", parameter_count);
 
                 for eq in &machine.equations {
-                    println!(" {eq:?} {:?}", eq.has_known());
+                    println!("{eq:?}");
+                    if eq.is_empty() {
+                        continue;
+                    }
                 }
                 // let relations = machine.relations();
                 // println!("relations: {:?}", relations);
-                machine.strategies();
+                let strategies = machine.parametrize(parameter_count);
+                println!("strategies len: {}", strategies.len());
+                for strategy in strategies {
+                    println!("{strategy:?}");
+                }
 
                 // total_count += iter_until(&mut solution_buffer[..], &skips, |potential_sol| {
                 //     // println!("{potential_sol:?} total {}", potential_sol.iter().sum::<u16>());
@@ -661,40 +704,36 @@ fn gcd(mut a: u32, mut b: u32) -> u32 {
     a
 }
 
-fn lcm(a: u32, b: u32) -> u32 {
-    a * b / gcd(a, b)
-}
+// fn iter_until<T>(s: &mut [u32], skip: &[usize], mut f: impl FnMut(&[u32]) -> Option<T>) -> T {
+//     fn iter_until_rec<T>(
+//         s: &mut [u32],
+//         usable_size: usize,
+//         skip: &[usize],
+//         l: u32,
+//         f: &mut impl FnMut(&[u32]) -> Option<T>,
+//     ) -> Option<T> {
+//         if usable_size == 0 {
+//             if l == 0 { f(s) } else { None }
+//         } else if skip.iter().any(|&pos| pos == usable_size - 1) {
+//             iter_until_rec(s, usable_size - 1, skip, l, f)
+//         } else {
+//             for i in 0..=l {
+//                 s[usable_size - 1] = i;
 
-fn iter_until<T>(s: &mut [u32], skip: &[usize], mut f: impl FnMut(&[u32]) -> Option<T>) -> T {
-    fn iter_until_rec<T>(
-        s: &mut [u32],
-        usable_size: usize,
-        skip: &[usize],
-        l: u32,
-        f: &mut impl FnMut(&[u32]) -> Option<T>,
-    ) -> Option<T> {
-        if usable_size == 0 {
-            if l == 0 { f(s) } else { None }
-        } else if skip.iter().any(|&pos| pos == usable_size - 1) {
-            iter_until_rec(s, usable_size - 1, skip, l, f)
-        } else {
-            for i in 0..=l {
-                s[usable_size - 1] = i;
+//                 if let Some(ret) = iter_until_rec(s, usable_size - 1, skip, l - i, f) {
+//                     return Some(ret);
+//                 }
+//             }
 
-                if let Some(ret) = iter_until_rec(s, usable_size - 1, skip, l - i, f) {
-                    return Some(ret);
-                }
-            }
+//             None
+//         }
+//     }
 
-            None
-        }
-    }
+//     for len in 1.. {
+//         if let Some(ret) = iter_until_rec(s, s.len(), skip, len, &mut f) {
+//             return ret;
+//         }
+//     }
 
-    for len in 1.. {
-        if let Some(ret) = iter_until_rec(s, s.len(), skip, len, &mut f) {
-            return ret;
-        }
-    }
-
-    unreachable!()
-}
+//     unreachable!()
+// }
